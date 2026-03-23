@@ -1,0 +1,30 @@
+server:
+  port: ":8080"
+  mode: "debug"
+  json_format:
+    enabled: false
+
+ip2region:
+  v4_db_path: "./ip2region_v4.xdb"
+  v6_db_path: "./ip2region_v6.xdb"
+
+log:
+  level: "info"
+  file: "logs/app.log"
+  console_output: true
+  request_log: true
+  max_size: 10
+  max_backups: 5
+  max_age: 7
+
+random_image:
+  local_enabled: false
+  local_path: "images/"
+
+download:
+  path: "downloads/"
+
+database:
+  path: "./stats.db"
+  max_open_conns: 10
+  max_idle_conns: 5
