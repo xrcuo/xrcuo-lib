@@ -79,7 +79,7 @@ func GetRegionByIP(ip string) (RegionParts, error) {
 	}
 
 	// 执行查询
-	regionRaw, err := ip2regionService.SearchByStr(ip)
+	regionRaw, err := ip2regionService.Search(ip)
 	if err != nil {
 		return RegionParts{}, fmt.Errorf("IP查询失败：%v", err)
 	}
