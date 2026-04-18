@@ -10,7 +10,6 @@ import (
 
 	"github.com/lionsoul2014/ip2region/binding/golang/service"
 	"github.com/sirupsen/logrus"
-	"github.com/xrcuo/xrcuo-api/config"
 )
 
 // RegionParts 地区结构化数据
@@ -26,8 +25,8 @@ var ip2regionService *service.Ip2Region
 
 // InitIP2Region 初始化IP2Region服务
 func InitIP2Region() error {
-	v4DBPath := config.GetIP2RegionV4DBPath()
-	v6DBPath := config.GetIP2RegionV6DBPath()
+	v4DBPath := "./data/ip2region_v4.xdb"
+	v6DBPath := "./data/ip2region_v6.xdb"
 
 	logrus.Infof("开始初始化IP2Region服务: IPv4路径: %s, IPv6路径: %s", v4DBPath, v6DBPath)
 
