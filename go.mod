@@ -7,7 +7,7 @@ require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/lib/pq v1.12.3
-	github.com/lionsoul2014/ip2region/binding/golang v0.0.0-20260417083004-03cc433717a7
+	github.com/lionsoul2014/ip2region/binding/golang v0.0.0-20260419022313-1d9ffabfebf5
 	github.com/sirupsen/logrus v1.9.4
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1
