@@ -57,11 +57,6 @@ type Config struct {
 		MaxIdleConns int    `yaml:"max_idle_conns"`
 	} `yaml:"database"`
 
-	IP2Region struct {
-		V4DBPath string `yaml:"v4_db_path"`
-		V6DBPath string `yaml:"v6_db_path"`
-	} `yaml:"ip2region"`
-
 	Log struct {
 		Level            string `yaml:"level"`
 		File             string `yaml:"file"`
@@ -210,12 +205,6 @@ func (cm *ConfigManager) validateConfig(config *Config) {
 	if !validModes[config.Server.Mode] {
 		logrus.Warnf("无效的Gin模式: %s, 使用默认模式: debug", config.Server.Mode)
 		config.Server.Mode = "debug"
-	}
-
-	if config.IP2Region.V4DBPath == "" && config.IP2Region.V6DBPath == "" {
-		logrus.Warn("检测到旧版本配置格式，将使用默认配置")
-		config.IP2Region.V4DBPath = "./ip2region_v4.xdb"
-		config.IP2Region.V6DBPath = "./ip2region_v6.xdb"
 	}
 
 	validLogLevels := map[string]bool{"debug": true, "info": true, "warn": true, "error": true, "fatal": true, "panic": true}
@@ -427,24 +416,6 @@ func GetMaxIdleConns() int {
 		return 5
 	}
 	return config.Database.MaxIdleConns
-}
-
-func GetIP2RegionV4DBPath() string {
-	cm := GetInstance()
-	config := cm.GetConfig()
-	if config == nil || config.IP2Region.V4DBPath == "" {
-		return "./ip2region_v4.xdb"
-	}
-	return config.IP2Region.V4DBPath
-}
-
-func GetIP2RegionV6DBPath() string {
-	cm := GetInstance()
-	config := cm.GetConfig()
-	if config == nil || config.IP2Region.V6DBPath == "" {
-		return "./ip2region_v6.xdb"
-	}
-	return config.IP2Region.V6DBPath
 }
 
 func GetLogLevel() string {
