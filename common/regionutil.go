@@ -1,17 +1,19 @@
 package common
 
 import (
+	"embed"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/lionsoul2014/ip2region/binding/golang/service"
 	"github.com/sirupsen/logrus"
-	"github.com/xrcuo/xrcuo-lib/config"
 )
+
+//go:embed data/ip2region_v4.xdb
+//go:embed data/ip2region_v6.xdb
+var embeddedDB embed.FS
 
 // RegionParts 地区结构化数据
 type RegionParts struct {
@@ -23,22 +25,30 @@ type RegionParts struct {
 
 // 全局ip2region服务
 var ip2regionService *service.Ip2Region
+var tempDir string
 
 // InitIP2Region 初始化IP2Region服务
 func InitIP2Region() error {
-	v4DBPath := config.GetIP2RegionV4DBPath()
-	v6DBPath := config.GetIP2RegionV6DBPath()
+	logrus.Info("开始初始化IP2Region服务（使用内嵌数据库）")
 
-	logrus.Infof("开始初始化IP2Region服务: IPv4路径: %s, IPv6路径: %s", v4DBPath, v6DBPath)
+	// 创建临时目录
+	var err error
+	tempDir, err = os.MkdirTemp("", "ip2region-*")
+	if err != nil {
+		return fmt.Errorf("创建临时目录失败: %v", err)
+	}
+	logrus.Infof("创建临时目录: %s", tempDir)
 
-	// 检查并下载 IPv4 数据库文件
-	if err := checkAndDownloadDB(v4DBPath, "IPv4"); err != nil {
-		return fmt.Errorf("检查/下载IPv4数据库失败: %v", err)
+	// 提取 IPv4 数据库文件
+	v4DBPath := filepath.Join(tempDir, "ip2region_v4.xdb")
+	if err := extractEmbeddedFile("data/ip2region_v4.xdb", v4DBPath); err != nil {
+		return fmt.Errorf("提取IPv4数据库失败: %v", err)
 	}
 
-	// 检查并下载 IPv6 数据库文件（IPv6是可选的，失败不影响启动）
-	if err := checkAndDownloadDB(v6DBPath, "IPv6"); err != nil {
-		logrus.Warnf("检查/下载IPv6数据库失败，将仅使用IPv4: %v", err)
+	// 提取 IPv6 数据库文件
+	v6DBPath := filepath.Join(tempDir, "ip2region_v6.xdb")
+	if err := extractEmbeddedFile("data/ip2region_v6.xdb", v6DBPath); err != nil {
+		logrus.Warnf("提取IPv6数据库失败，将仅使用IPv4: %v", err)
 	}
 
 	// 创建v4配置：指定缓存策略和v4的xdb文件路径
@@ -93,11 +103,20 @@ func GetRegionByIP(ip string) (RegionParts, error) {
 	return result, nil
 }
 
-// CloseIP2Region 关闭IP2Region服务
+// CloseIP2Region 关闭IP2Region服务并清理临时文件
 func CloseIP2Region() {
 	if ip2regionService != nil {
 		ip2regionService.Close()
 		logrus.Info("IP2Region服务已关闭")
+	}
+
+	// 清理临时目录
+	if tempDir != "" {
+		if err := os.RemoveAll(tempDir); err != nil {
+			logrus.Warnf("清理临时目录失败: %v", err)
+		} else {
+			logrus.Infof("清理临时目录成功: %s", tempDir)
+		}
 	}
 }
 
@@ -151,62 +170,19 @@ func JoinNonEmpty(strs []string, sep string) string {
 	return strings.Join(result, sep)
 }
 
-// downloadFile 下载文件到指定路径
-func downloadFile(url, filePath string) error {
-	logrus.Infof("正在下载文件: %s -> %s", url, filePath)
+// extractEmbeddedFile 从 embed.FS 中提取文件到指定路径
+func extractEmbeddedFile(embedPath, destPath string) error {
+	logrus.Infof("正在提取内嵌文件: %s -> %s", embedPath, destPath)
 
-	resp, err := http.Get(url)
+	data, err := embeddedDB.ReadFile(embedPath)
 	if err != nil {
-		return fmt.Errorf("下载请求失败: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("下载失败，HTTP状态码: %d", resp.StatusCode)
+		return fmt.Errorf("读取内嵌文件失败: %v", err)
 	}
 
-	dir := filepath.Dir(filePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("创建目录失败: %v", err)
+	if err := os.WriteFile(destPath, data, 0644); err != nil {
+		return fmt.Errorf("写入文件失败: %v", err)
 	}
 
-	file, fileErr := os.Create(filePath)
-	if fileErr != nil {
-		return fmt.Errorf("创建文件失败: %v", fileErr)
-	}
-	defer file.Close()
-
-	_, copyErr := io.Copy(file, resp.Body)
-	if copyErr != nil {
-		return fmt.Errorf("写入文件失败: %v", copyErr)
-	}
-
-	logrus.Infof("文件下载成功: %s", filePath)
-	return nil
-}
-
-// checkAndDownloadDB 检查数据库文件是否存在，不存在则自动下载
-func checkAndDownloadDB(dbPath, dbType string) error {
-	if _, err := os.Stat(dbPath); err == nil {
-		logrus.Infof("%s数据库文件已存在: %s", dbType, dbPath)
-		return nil
-	}
-
-	logrus.Warnf("%s数据库文件不存在，准备自动下载: %s", dbType, dbPath)
-
-	var downloadURL string
-	switch dbType {
-	case "IPv4":
-		downloadURL = "https://github.com/lionsoul2014/ip2region/raw/master/data/ip2region_v4.xdb"
-	case "IPv6":
-		downloadURL = "https://github.com/lionsoul2014/ip2region/raw/master/data/ip2region_v6.xdb"
-	default:
-		return fmt.Errorf("未知的数据库类型: %s", dbType)
-	}
-
-	if err := downloadFile(downloadURL, dbPath); err != nil {
-		return fmt.Errorf("下载%s数据库失败: %v", dbType, err)
-	}
-
+	logrus.Infof("文件提取成功: %s", destPath)
 	return nil
 }
