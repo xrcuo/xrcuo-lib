@@ -136,7 +136,7 @@ func (cm *ConfigManager) getConfigPath() string {
 	if path := os.Getenv("CONFIG_FILE_PATH"); path != "" {
 		return path
 	}
-	return "config.yaml"
+	return "web.yaml"
 }
 
 func Parse() {
@@ -183,7 +183,7 @@ func (cm *ConfigManager) ParseConfig() {
 	config := &Config{}
 	err = yaml.Unmarshal(content, config)
 	if err != nil {
-		logrus.Fatal("解析 config.yaml 失败，请检查格式、内容是否输入正确")
+		logrus.Fatal("解析 web.yaml 失败，请检查格式、内容是否输入正确")
 	}
 
 	cm.validateConfig(config)
