@@ -11,6 +11,7 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/sirupsen/logrus"
 	"github.com/xrcuo/xrcuo-lib/config"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -60,7 +61,7 @@ func InitDB() error {
 
 func initSQLite() error {
 	dbPath := config.GetDatabasePath()
-	
+
 	// 确保数据库目录存在
 	dir := filepath.Dir(dbPath)
 	if dir != "." {
@@ -68,7 +69,7 @@ func initSQLite() error {
 			return fmt.Errorf("创建数据库目录失败: %v", err)
 		}
 	}
-	
+
 	var err error
 	DB, err = sql.Open("sqlite", dbPath)
 	if err != nil {

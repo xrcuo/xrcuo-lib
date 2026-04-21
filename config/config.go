@@ -13,91 +13,8 @@ import (
 )
 
 //go:embed default_config.yaml
-var defConfig string
+var defaultConfigYAML string
 
-type Config struct {
-	Server struct {
-		Port       string `yaml:"port"`
-		Mode       string `yaml:"mode"`
-		JSONFormat struct {
-			Enabled bool `yaml:"enabled"`
-		} `yaml:"json_format"`
-	} `yaml:"server"`
-
-	Site struct {
-		Title     string `yaml:"title"`
-		Name      string `yaml:"name"`
-		Motto     string `yaml:"motto"`
-		AvatarURL string `yaml:"avatar_url"`
-		ICP       string `yaml:"icp"`
-		Copyright string `yaml:"copyright"`
-		Links     struct {
-			Blog  string `yaml:"blog"`
-			CDK   string `yaml:"cdk"`
-			API   string `yaml:"api"`
-			About string `yaml:"about"`
-		} `yaml:"links"`
-		Contact struct {
-			GitHub string `yaml:"github"`
-			Zhihu  string `yaml:"zhihu"`
-			Weibo  string `yaml:"weibo"`
-			Email  string `yaml:"email"`
-		} `yaml:"contact"`
-	} `yaml:"site"`
-
-	Database struct {
-		Type         string `yaml:"type"`
-		Path         string `yaml:"path"`
-		Host         string `yaml:"host"`
-		Port         int    `yaml:"port"`
-		User         string `yaml:"user"`
-		Password     string `yaml:"password"`
-		DBName       string `yaml:"dbname"`
-		MaxOpenConns int    `yaml:"max_open_conns"`
-		MaxIdleConns int    `yaml:"max_idle_conns"`
-	} `yaml:"database"`
-
-	Log struct {
-		Level            string `yaml:"level"`
-		File             string `yaml:"file"`
-		ConsoleOutput    bool   `yaml:"console_output"`
-		RequestLog       bool   `yaml:"request_log"`
-		MaxSize          int    `yaml:"max_size"`
-		MaxBackups       int    `yaml:"max_backups"`
-		MaxAge           int    `yaml:"max_age"`
-		Compress         bool   `yaml:"compress"`
-		NewFileOnStartup bool   `yaml:"new_file_on_startup"`
-	} `yaml:"log"`
-
-	RateLimit struct {
-		Capacity float64 `yaml:"capacity"`
-		Rate     float64 `yaml:"rate"`
-	} `yaml:"rate_limit"`
-
-	RandomImage struct {
-		LocalEnabled bool   `yaml:"local_enabled"`
-		LocalPath    string `yaml:"local_path"`
-	} `yaml:"random_image"`
-}
-
-// ConfigUpdateCallback 配置更新回调函数类型
-type ConfigUpdateCallback func(*Config)
-
-// ConfigManager 配置管理器单例
-type ConfigManager struct {
-	config          *Config
-	configPath      string
-	mutex           sync.RWMutex
-	watcher         *fsnotify.Watcher
-	stopChan        chan struct{}
-	isWatching      bool
-	updateCallbacks []ConfigUpdateCallback
-	callbacksMutex  sync.Mutex
-	debounceTimer   *time.Timer
-	debounceMutex   sync.Mutex
-}
-
-// 全局配置管理器实例
 var (
 	instance *ConfigManager
 	once     sync.Once
@@ -127,22 +44,24 @@ func (cm *ConfigManager) SetConfig(config *Config) {
 	cm.config = config
 }
 
-func (cm *ConfigManager) genConfig() error {
+func (cm *ConfigManager) generateDefaultConfig() error {
 	logrus.Debugf("正在生成配置文件: %s", cm.configPath)
-	return os.WriteFile(cm.configPath, []byte(defConfig), 0644)
+	return os.WriteFile(cm.configPath, []byte(defaultConfigYAML), 0644)
 }
 
-func (cm *ConfigManager) getConfigPath() string {
+func (cm *ConfigManager) getConfigFilePath() string {
 	if path := os.Getenv("CONFIG_FILE_PATH"); path != "" {
 		return path
 	}
-	return "web.yaml"
+	return defaultConfigPath
 }
 
+// Parse 解析配置（全局入口）
 func Parse() {
 	GetInstance().ParseConfig()
 }
 
+// RegisterUpdateCallback 注册配置更新回调
 func (cm *ConfigManager) RegisterUpdateCallback(callback ConfigUpdateCallback) {
 	cm.callbacksMutex.Lock()
 	defer cm.callbacksMutex.Unlock()
@@ -160,14 +79,13 @@ func (cm *ConfigManager) executeUpdateCallbacks(config *Config) {
 	}
 }
 
+// ParseConfig 解析配置文件
 func (cm *ConfigManager) ParseConfig() {
-	cm.configPath = cm.getConfigPath()
-
+	cm.configPath = cm.getConfigFilePath()
 	logrus.Debugf("正在解析配置文件: %s", cm.configPath)
 
 	if _, err := os.Stat(cm.configPath); os.IsNotExist(err) {
-		err = cm.genConfig()
-		if err != nil {
+		if err := cm.generateDefaultConfig(); err != nil {
 			logrus.Fatalf("无法生成设置文件: %s, 请确认是否给足系统权限", cm.configPath)
 		}
 		logrus.Warnf("未检测到 %s，已自动生成，请配置并重新启动", cm.configPath)
@@ -181,13 +99,11 @@ func (cm *ConfigManager) ParseConfig() {
 	}
 
 	config := &Config{}
-	err = yaml.Unmarshal(content, config)
-	if err != nil {
-		logrus.Fatal("解析 web.yaml 失败，请检查格式、内容是否输入正确")
+	if err := yaml.Unmarshal(content, config); err != nil {
+		logrus.Fatal("解析配置文件失败，请检查格式、内容是否输入正确")
 	}
 
-	cm.validateConfig(config)
-
+	cm.validateAndSetDefaults(config)
 	isUpdate := cm.config != nil
 	cm.SetConfig(config)
 
@@ -200,94 +116,68 @@ func (cm *ConfigManager) ParseConfig() {
 	}
 }
 
-func (cm *ConfigManager) validateConfig(config *Config) {
+func (cm *ConfigManager) validateAndSetDefaults(config *Config) {
 	validModes := map[string]bool{"debug": true, "release": true, "test": true}
 	if !validModes[config.Server.Mode] {
-		logrus.Warnf("无效的Gin模式: %s, 使用默认模式: debug", config.Server.Mode)
-		config.Server.Mode = "debug"
+		logrus.Warnf("无效的Gin模式: %s, 使用默认模式: %s", config.Server.Mode, defaultServerMode)
+		config.Server.Mode = defaultServerMode
 	}
 
 	validLogLevels := map[string]bool{"debug": true, "info": true, "warn": true, "error": true, "fatal": true, "panic": true}
 	if !validLogLevels[config.Log.Level] {
-		logrus.Warnf("无效的日志级别: %s, 使用默认级别: info", config.Log.Level)
-		config.Log.Level = "info"
+		logrus.Warnf("无效的日志级别: %s, 使用默认级别: %s", config.Log.Level, defaultLogLevel)
+		config.Log.Level = defaultLogLevel
 	}
+
+	setStringDefault(&config.Log.File, defaultLogFile)
 
 	if config.Log.MaxSize <= 0 {
-		logrus.Warnf("无效的日志文件大小: %d, 使用默认值: 10 MB", config.Log.MaxSize)
-		config.Log.MaxSize = 10
+		logrus.Warnf("无效的日志文件大小: %d, 使用默认值: %d MB", config.Log.MaxSize, defaultLogMaxSize)
+		config.Log.MaxSize = defaultLogMaxSize
 	}
-
 	if config.Log.MaxBackups <= 0 {
-		logrus.Warnf("无效的日志文件保留数量: %d, 使用默认值: 5", config.Log.MaxBackups)
-		config.Log.MaxBackups = 5
+		logrus.Warnf("无效的日志文件保留数量: %d, 使用默认值: %d", config.Log.MaxBackups, defaultLogMaxBackups)
+		config.Log.MaxBackups = defaultLogMaxBackups
 	}
-
 	if config.Log.MaxAge <= 0 {
-		logrus.Warnf("无效的日志文件保留天数: %d, 使用默认值: 7", config.Log.MaxAge)
-		config.Log.MaxAge = 7
+		logrus.Warnf("无效的日志文件保留天数: %d, 使用默认值: %d", config.Log.MaxAge, defaultLogMaxAge)
+		config.Log.MaxAge = defaultLogMaxAge
 	}
 
 	if config.RateLimit.Capacity <= 0 {
-		logrus.Warnf("无效的速率限制容量: %f, 使用默认值: 500", config.RateLimit.Capacity)
-		config.RateLimit.Capacity = 500
+		logrus.Warnf("无效的速率限制容量: %f, 使用默认值: %d", config.RateLimit.Capacity, defaultRateLimitCap)
+		config.RateLimit.Capacity = defaultRateLimitCap
 	}
-
 	if config.RateLimit.Rate <= 0 {
-		logrus.Warnf("无效的速率限制速率: %f, 使用默认值: 10", config.RateLimit.Rate)
-		config.RateLimit.Rate = 10
+		logrus.Warnf("无效的速率限制速率: %f, 使用默认值: %d", config.RateLimit.Rate, defaultRateLimitRate)
+		config.RateLimit.Rate = defaultRateLimitRate
 	}
 
-	if config.Site.Title == "" {
-		config.Site.Title = "YVLPYY｜二次元の小窝"
-	}
-	if config.Site.Name == "" {
-		config.Site.Name = "林熙"
-	}
-	if config.Site.Motto == "" {
-		config.Site.Motto = "人海中遇见的人终将归还人海"
-	}
-	if config.Site.AvatarURL == "" {
-		config.Site.AvatarURL = "https://yilx.net/tx.jpg"
-	}
-	if config.Site.ICP == "" {
-		config.Site.ICP = "沪ICP备1234567890号-1"
-	}
-	if config.Site.Copyright == "" {
-		config.Site.Copyright = "© 2026 YVLPYY. All rights reserved."
-	}
-	if config.Site.Links.Blog == "" {
-		config.Site.Links.Blog = "https://blog.yilx.net/"
-	}
-	if config.Site.Links.CDK == "" {
-		config.Site.Links.CDK = "https://cdk.yilx.net"
-	}
-	if config.Site.Links.API == "" {
-		config.Site.Links.API = "https://api.yilx.net"
-	}
-	if config.Site.Links.About == "" {
-		config.Site.Links.About = "https://blog.yilx.net/about.html"
-	}
-	if config.Site.Contact.GitHub == "" {
-		config.Site.Contact.GitHub = "https://github.com/"
-	}
-	if config.Site.Contact.Zhihu == "" {
-		config.Site.Contact.Zhihu = "https://www.zhihu.com/"
-	}
-	if config.Site.Contact.Weibo == "" {
-		config.Site.Contact.Weibo = "https://weibo.com/"
-	}
-	if config.Site.Contact.Email == "" {
-		config.Site.Contact.Email = "https://mail.qq.com/"
-	}
-
-	if config.RandomImage.LocalPath == "" {
-		config.RandomImage.LocalPath = "./data/images"
-	}
+	setStringDefault(&config.Site.Title, defaultSiteTitle)
+	setStringDefault(&config.Site.Name, defaultSiteName)
+	setStringDefault(&config.Site.Motto, defaultSiteMotto)
+	setStringDefault(&config.Site.AvatarURL, defaultSiteAvatar)
+	setStringDefault(&config.Site.ICP, defaultSiteICP)
+	setStringDefault(&config.Site.Copyright, defaultSiteCopyright)
+	setStringDefault(&config.Site.Links.Blog, defaultSiteBlogLink)
+	setStringDefault(&config.Site.Links.CDK, defaultSiteCDKLink)
+	setStringDefault(&config.Site.Links.API, defaultSiteAPILink)
+	setStringDefault(&config.Site.Links.About, defaultSiteAboutLink)
+	setStringDefault(&config.Site.Contact.GitHub, defaultSiteGitHub)
+	setStringDefault(&config.Site.Contact.Zhihu, defaultSiteZhihu)
+	setStringDefault(&config.Site.Contact.Weibo, defaultSiteWeibo)
+	setStringDefault(&config.Site.Contact.Email, defaultSiteEmail)
 
 	logrus.Debug("配置验证完成")
 }
 
+func setStringDefault(field *string, defaultValue string) {
+	if *field == "" {
+		*field = defaultValue
+	}
+}
+
+// WatchConfig 监听配置文件变化
 func (cm *ConfigManager) WatchConfig() {
 	if cm.isWatching {
 		return
@@ -308,54 +198,54 @@ func (cm *ConfigManager) WatchConfig() {
 
 	cm.isWatching = true
 
-	go func() {
-		defer func() {
-			cm.watcher.Close()
-			cm.isWatching = false
-			cm.debounceMutex.Lock()
-			if cm.debounceTimer != nil {
-				cm.debounceTimer.Stop()
-			}
-			cm.debounceMutex.Unlock()
-		}()
-
-		for {
-			select {
-			case event, ok := <-cm.watcher.Events:
-				if !ok {
-					return
-				}
-
-				if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
-					logrus.Info("配置文件发生变化，重新加载配置")
-					cm.debounceMutex.Lock()
-					if cm.debounceTimer != nil {
-						cm.debounceTimer.Stop()
-					}
-					cm.debounceTimer = time.AfterFunc(100*time.Millisecond, func() {
-						cm.ParseConfig()
-					})
-					cm.debounceMutex.Unlock()
-				}
-			case err, ok := <-cm.watcher.Errors:
-				if !ok {
-					return
-				}
-				logrus.Errorf("配置文件监听错误: %v", err)
-			case <-cm.stopChan:
-				return
-			}
-		}
-	}()
-
+	go cm.watchLoop()
 	logrus.Info("配置文件监听已启动")
 }
 
+func (cm *ConfigManager) watchLoop() {
+	defer func() {
+		cm.watcher.Close()
+		cm.isWatching = false
+		cm.debounceMutex.Lock()
+		if cm.debounceTimer != nil {
+			cm.debounceTimer.Stop()
+		}
+		cm.debounceMutex.Unlock()
+	}()
+
+	for {
+		select {
+		case event, ok := <-cm.watcher.Events:
+			if !ok {
+				return
+			}
+			if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
+				logrus.Info("配置文件发生变化，重新加载配置")
+				cm.debounceMutex.Lock()
+				if cm.debounceTimer != nil {
+					cm.debounceTimer.Stop()
+				}
+				cm.debounceTimer = time.AfterFunc(watchDebounceDuration, func() {
+					cm.ParseConfig()
+				})
+				cm.debounceMutex.Unlock()
+			}
+		case err, ok := <-cm.watcher.Errors:
+			if !ok {
+				return
+			}
+			logrus.Errorf("配置文件监听错误: %v", err)
+		case <-cm.stopChan:
+			return
+		}
+	}
+}
+
+// StopWatching 停止监听配置文件
 func (cm *ConfigManager) StopWatching() {
 	if !cm.isWatching {
 		return
 	}
-
 	select {
 	case cm.stopChan <- struct{}{}:
 	default:
@@ -364,267 +254,213 @@ func (cm *ConfigManager) StopWatching() {
 	logrus.Info("配置文件监听已停止")
 }
 
+// 便捷访问函数
 func GetServerPort() string {
 	cm := GetInstance()
-	config := cm.GetConfig()
-	if config == nil || config.Server.Port == "" {
-		return ":8080"
+	if c := cm.GetConfig(); c != nil && c.Server.Port != "" {
+		return c.Server.Port
 	}
-	return config.Server.Port
+	return defaultServerPort
 }
 
 func GetServerMode() string {
 	cm := GetInstance()
-	config := cm.GetConfig()
-	if config == nil || config.Server.Mode == "" {
-		return "debug"
+	if c := cm.GetConfig(); c != nil && c.Server.Mode != "" {
+		return c.Server.Mode
 	}
-	return config.Server.Mode
+	return defaultServerMode
 }
 
 func IsJSONFormatEnabled() bool {
 	cm := GetInstance()
-	config := cm.GetConfig()
-	if config == nil {
-		return false
+	if c := cm.GetConfig(); c != nil {
+		return c.Server.JSONFormat.Enabled
 	}
-	return config.Server.JSONFormat.Enabled
-}
-
-func GetDatabasePath() string {
-	cm := GetInstance()
-	config := cm.GetConfig()
-	if config == nil || config.Database.Path == "" {
-		return "./stats.db"
-	}
-	return config.Database.Path
-}
-
-func GetMaxOpenConns() int {
-	cm := GetInstance()
-	config := cm.GetConfig()
-	if config == nil || config.Database.MaxOpenConns <= 0 {
-		return 10
-	}
-	return config.Database.MaxOpenConns
-}
-
-func GetMaxIdleConns() int {
-	cm := GetInstance()
-	config := cm.GetConfig()
-	if config == nil || config.Database.MaxIdleConns <= 0 {
-		return 5
-	}
-	return config.Database.MaxIdleConns
-}
-
-func GetLogLevel() string {
-	cm := GetInstance()
-	config := cm.GetConfig()
-	if config == nil || config.Log.Level == "" {
-		return "info"
-	}
-	return config.Log.Level
+	return false
 }
 
 func GetDatabaseType() string {
 	cm := GetInstance()
-	config := cm.GetConfig()
-	if config == nil || config.Database.Type == "" {
-		return "sqlite"
+	if c := cm.GetConfig(); c != nil && c.Database.Type != "" {
+		return c.Database.Type
 	}
-	return config.Database.Type
+	return defaultDBType
+}
+
+func GetDatabasePath() string {
+	cm := GetInstance()
+	if c := cm.GetConfig(); c != nil && c.Database.Path != "" {
+		return c.Database.Path
+	}
+	return defaultDBPath
 }
 
 func GetDatabaseHost() string {
 	cm := GetInstance()
-	config := cm.GetConfig()
-	if config == nil || config.Database.Host == "" {
-		return "localhost"
+	if c := cm.GetConfig(); c != nil && c.Database.Host != "" {
+		return c.Database.Host
 	}
-	return config.Database.Host
+	return defaultDBHost
 }
 
 func GetDatabasePort() int {
 	cm := GetInstance()
-	config := cm.GetConfig()
-	if config == nil || config.Database.Port <= 0 {
-		dbType := GetDatabaseType()
-		switch dbType {
-		case "mysql":
-			return 3306
-		case "postgresql":
-			return 5432
-		}
+	if c := cm.GetConfig(); c != nil && c.Database.Port > 0 {
+		return c.Database.Port
 	}
-	return config.Database.Port
+	switch GetDatabaseType() {
+	case "mysql":
+		return 3306
+	case "postgresql":
+		return 5432
+	}
+	return 0
 }
 
 func GetDatabaseUser() string {
 	cm := GetInstance()
-	config := cm.GetConfig()
-	if config == nil {
-		return ""
+	if c := cm.GetConfig(); c != nil {
+		return c.Database.User
 	}
-	return config.Database.User
+	return ""
 }
 
 func GetDatabasePassword() string {
 	cm := GetInstance()
-	config := cm.GetConfig()
-	if config == nil {
-		return ""
+	if c := cm.GetConfig(); c != nil {
+		return c.Database.Password
 	}
-	return config.Database.Password
+	return ""
 }
 
 func GetDatabaseName() string {
 	cm := GetInstance()
-	config := cm.GetConfig()
-	if config == nil || config.Database.DBName == "" {
-		return "xrcuo_api"
+	if c := cm.GetConfig(); c != nil && c.Database.DBName != "" {
+		return c.Database.DBName
 	}
-	return config.Database.DBName
+	return defaultDBName
+}
+
+func GetMaxOpenConns() int {
+	cm := GetInstance()
+	if c := cm.GetConfig(); c != nil && c.Database.MaxOpenConns > 0 {
+		return c.Database.MaxOpenConns
+	}
+	return defaultDBMaxOpenConns
+}
+
+func GetMaxIdleConns() int {
+	cm := GetInstance()
+	if c := cm.GetConfig(); c != nil && c.Database.MaxIdleConns > 0 {
+		return c.Database.MaxIdleConns
+	}
+	return defaultDBMaxIdleConns
+}
+
+func GetLogLevel() string {
+	cm := GetInstance()
+	if c := cm.GetConfig(); c != nil && c.Log.Level != "" {
+		return c.Log.Level
+	}
+	return defaultLogLevel
+}
+
+func GetLogFile() string {
+	cm := GetInstance()
+	if c := cm.GetConfig(); c != nil && c.Log.File != "" {
+		return c.Log.File
+	}
+	return defaultLogFile
 }
 
 func GetRateLimitCapacity() float64 {
 	cm := GetInstance()
-	config := cm.GetConfig()
-	if config == nil || config.RateLimit.Capacity <= 0 {
-		return 500
+	if c := cm.GetConfig(); c != nil && c.RateLimit.Capacity > 0 {
+		return c.RateLimit.Capacity
 	}
-	return config.RateLimit.Capacity
+	return defaultRateLimitCap
 }
 
 func GetRateLimitRate() float64 {
 	cm := GetInstance()
-	config := cm.GetConfig()
-	if config == nil || config.RateLimit.Rate <= 0 {
-		return 10
+	if c := cm.GetConfig(); c != nil && c.RateLimit.Rate > 0 {
+		return c.RateLimit.Rate
 	}
-	return config.RateLimit.Rate
+	return defaultRateLimitRate
 }
 
 func GetSiteTitle() string {
 	cm := GetInstance()
-	config := cm.GetConfig()
-	if config == nil {
-		return "YVLPYY｜二次元の小窝"
+	if c := cm.GetConfig(); c != nil {
+		return c.Site.Title
 	}
-	return config.Site.Title
+	return defaultSiteTitle
 }
 
 func GetSiteName() string {
 	cm := GetInstance()
-	config := cm.GetConfig()
-	if config == nil {
-		return "林熙"
+	if c := cm.GetConfig(); c != nil {
+		return c.Site.Name
 	}
-	return config.Site.Name
+	return defaultSiteName
 }
 
 func GetSiteMotto() string {
 	cm := GetInstance()
-	config := cm.GetConfig()
-	if config == nil {
-		return "人海中遇见的人终将归还人海"
+	if c := cm.GetConfig(); c != nil {
+		return c.Site.Motto
 	}
-	return config.Site.Motto
+	return defaultSiteMotto
 }
 
 func GetSiteAvatarURL() string {
 	cm := GetInstance()
-	config := cm.GetConfig()
-	if config == nil {
-		return "https://yilx.net/tx.jpg"
+	if c := cm.GetConfig(); c != nil {
+		return c.Site.AvatarURL
 	}
-	return config.Site.AvatarURL
+	return defaultSiteAvatar
 }
 
 func GetSiteICP() string {
 	cm := GetInstance()
-	config := cm.GetConfig()
-	if config == nil {
-		return "沪ICP备1234567890号-1"
+	if c := cm.GetConfig(); c != nil {
+		return c.Site.ICP
 	}
-	return config.Site.ICP
+	return defaultSiteICP
 }
 
 func GetSiteCopyright() string {
 	cm := GetInstance()
-	config := cm.GetConfig()
-	if config == nil {
-		return "© 2025 伊linxiyy. All rights reserved."
+	if c := cm.GetConfig(); c != nil {
+		return c.Site.Copyright
 	}
-	return config.Site.Copyright
+	return defaultSiteCopyright
 }
 
-func GetSiteLinks() struct {
-	Blog  string
-	CDK   string
-	API   string
-	About string
-} {
+func GetSiteLinks() SiteLinks {
 	cm := GetInstance()
-	config := cm.GetConfig()
-	defaultLinks := struct {
-		Blog  string
-		CDK   string
-		API   string
-		About string
-	}{
-		Blog:  "https://blog.yilx.net/",
-		CDK:   "https://cdk.yilx.net",
-		API:   "https://api.yilx.net",
-		About: "https://blog.yilx.net/about.html",
+	defaults := SiteLinks{
+		Blog:  defaultSiteBlogLink,
+		CDK:   defaultSiteCDKLink,
+		API:   defaultSiteAPILink,
+		About: defaultSiteAboutLink,
 	}
-	if config == nil {
-		return defaultLinks
+	if c := cm.GetConfig(); c != nil {
+		return c.Site.Links
 	}
-	return struct {
-		Blog  string
-		CDK   string
-		API   string
-		About string
-	}{
-		Blog:  config.Site.Links.Blog,
-		CDK:   config.Site.Links.CDK,
-		API:   config.Site.Links.API,
-		About: config.Site.Links.About,
-	}
+	return defaults
 }
 
-func GetSiteContact() struct {
-	GitHub string
-	Zhihu  string
-	Weibo  string
-	Email  string
-} {
+func GetSiteContact() SiteContact {
 	cm := GetInstance()
-	config := cm.GetConfig()
-	defaultContact := struct {
-		GitHub string
-		Zhihu  string
-		Weibo  string
-		Email  string
-	}{
-		GitHub: "https://github.com/",
-		Zhihu:  "https://www.zhihu.com/",
-		Weibo:  "https://weibo.com/",
-		Email:  "https://mail.qq.com/",
+	defaults := SiteContact{
+		GitHub: defaultSiteGitHub,
+		Zhihu:  defaultSiteZhihu,
+		Weibo:  defaultSiteWeibo,
+		Email:  defaultSiteEmail,
 	}
-	if config == nil {
-		return defaultContact
+	if c := cm.GetConfig(); c != nil {
+		return c.Site.Contact
 	}
-	return struct {
-		GitHub string
-		Zhihu  string
-		Weibo  string
-		Email  string
-	}{
-		GitHub: config.Site.Contact.GitHub,
-		Zhihu:  config.Site.Contact.Zhihu,
-		Weibo:  config.Site.Contact.Weibo,
-		Email:  config.Site.Contact.Email,
-	}
+	return defaults
 }

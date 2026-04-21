@@ -3,11 +3,20 @@ module github.com/xrcuo/xrcuo-lib
 go 1.25.0
 
 require (
+
+	// 配置管理
 	github.com/fsnotify/fsnotify v1.9.0
+	// Web 框架
 	github.com/gin-gonic/gin v1.12.0
+
+	// 数据库驱动
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/lib/pq v1.12.3
+
+	// IP 地理位置
 	github.com/lionsoul2014/ip2region/binding/golang v0.0.0-20260419022313-1d9ffabfebf5
+
+	// 日志
 	github.com/sirupsen/logrus v1.9.4
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1
